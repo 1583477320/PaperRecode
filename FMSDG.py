@@ -143,6 +143,7 @@ class FMGDA:
             #客户端任务梯度更新
             client_test_updates = []
 
+            #测试调整
             #初始化每一个任务的参数
             local_params_dic = {}
 
