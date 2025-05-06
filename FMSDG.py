@@ -34,11 +34,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 server_model = ServerSharedModel().to(device)
 client_model = ClientMTLModel(server_model).to(device)
 criterion = nn.CrossEntropyLoss()
-global_learn_rate = 0.001
-total_loss_task1 = 0
-total_loss_task2 = 0
-total_correct_task1 = 0
-total_correct_task2 = 0
+global_learn_rate = 0.1
+
 
 # 模拟5个客户端
 num_clients = 5
@@ -48,6 +45,12 @@ num_rounds = 100
 
 for round in range(num_rounds):
     print(f"=== Federal Round {round + 1}/{num_rounds} ===")
+    #统计量
+    total_loss_task1 = 0
+    total_loss_task2 = 0
+    total_correct_task1 = 0
+    total_correct_task2 = 0
+
 
     # 客户端本地训练
     client_models = []
@@ -64,35 +67,29 @@ for round in range(num_rounds):
     server_model = federated_aggregation(server_model, client_models_gard, global_learn_rate)
 
     # 评估全局模型（以客户端0为例）
-    client0_model = client_models[0]
+    client0_model = client_models[0].to(device)
     client0_model.eval()
-    correct_cls, total_cls, total_reg = 0, 0, 0.0
     loss_history = {'task1': [], 'task2': []}
-    correct_history = {'task1': [], 'task2': []}
+
 
     with torch.no_grad():
         for data, (target_task1, target_task2) in train_loader_test:
             data = data.to(device)
             pred_task1, pred_task2 = client0_model(data)
 
-            # # 分类任务准确率
-            # _, predicted = torch.max(pred_cls.cpu().data, 1)
-            # correct_cls += (predicted == target_cls).sum().item()
-            # total_cls += target_cls.size(0)
-
             # loss
             total_loss_task1 += criterion(pred_task1, target_task1)
             loss_history['task1'].append(total_loss_task1)
+
             total_loss_task2 += criterion(pred_task2, target_task2)
             loss_history['task2'].append(total_loss_task2)
 
             # correct
             pred1 = pred_task1.argmax(dim=1, keepdim=True)
             total_correct_task1 += pred1.eq(target_task1.view_as(pred1)).sum().item()
-            correct_history['task1'].append(total_correct_task1)
-            pred2 = pred_task1.argmax(dim=1, keepdim=True)
-            total_correct_task1 += pred2.eq(target_task1.view_as(pred2)).sum().item()
-            correct_history['task2'].append(total_correct_task2)
+
+            pred2 = pred_task2.argmax(dim=1, keepdim=True)
+            total_correct_task2 += pred2.eq(target_task2.view_as(pred2)).sum().item()
 
     total_loss_task1 /= len(train_loader_test.dataset)
     total_loss_task2 /= len(train_loader_test.dataset)
