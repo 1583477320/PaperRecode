@@ -4,12 +4,15 @@ import torch.nn as nn
 
 
 # -----------------客户端训练逻辑---------------
-def client_local_train(client_model, train_loader, tasks=["task1", "task2"], num_epochs=5):
+def client_local_train(client_model, server_weights, train_loader, tasks=["task1", "task2"], num_epochs=5):
     """客户端本地多任务训练"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     client_model.train()
     optimizer = optim.SGD(client_model.parameters(), lr=0.01)
     criterion = nn.CrossEntropyLoss()
+
+    with torch.no_grad():
+        client_model.feature_extractor.load_state_dict(server_weights)
 
     # 初始化梯度累积器：按任务存储共享层梯度
     grad_accumulator = {
