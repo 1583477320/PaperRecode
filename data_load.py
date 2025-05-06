@@ -1,7 +1,3 @@
-import openxlab
-from openxlab.dataset import info
-from openxlab.dataset import get
-from openxlab.dataset import download
 from torch.utils.data import Dataset, DataLoader, Subset
 import numpy as np
 import torch

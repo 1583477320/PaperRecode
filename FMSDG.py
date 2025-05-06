@@ -1,15 +1,10 @@
-import numpy as np
-import cvxpy as cp
-from typing import List, Dict, Any
-from numpy import ndarray
 from Client import client_local_train
 from ClientModel import ClientMTLModel
 import torch
 import torch.nn as nn
 from data_load import CompositeDatasetGenerator, CompositeDataset, split_data_to_servers
 from torch.utils.data import Dataset, DataLoader, Subset
-import copy
-from SERVICE import ServerSharedModel
+from Service import ServerSharedModel
 from Graient import federated_aggregation
 
 # 准备原始数据集

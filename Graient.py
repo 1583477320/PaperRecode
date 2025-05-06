@@ -1,6 +1,3 @@
-import numpy as np
-import torch
-import torch.nn as nn
 from AggregateClients import aggregate_clients
 from collections import OrderedDict
 
@@ -31,5 +28,9 @@ def federated_aggregation(server_model, client_gard, global_learn_rate):
             param_name]
 
     server_model.load_state_dict(update_shared_parameters)
+
+    # 梯度置为0
+    for param in server_model.feature_extractor.parameters():
+        param.grad.zero_()
 
     return server_model

@@ -1,10 +1,6 @@
-import numpy as np
-from ClientModel import ClientMTLModel
 import torch.optim as optim
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from collections import defaultdict
 
 
 # -----------------客户端训练逻辑---------------
