@@ -33,7 +33,7 @@ def aggregate_clients(client_dict):
             averaged[key].append(avg_tensor)
 
     average_tensors = dict(averaged)
-    return [average_tensors["task1"][0] + average_tensors["task2"][0], average_tensors["task1"][1] + average_tensors["task2"][1]]
+    return [0.5 * average_tensors["task1"][0] + 0.5 * average_tensors["task2"][0], 0.5 * average_tensors["task1"][1] + 0.5 * average_tensors["task2"][1]]
 
 
 def weighted_sum_parameters(aggregated_result, task_weights=(0.5, 0.5)):

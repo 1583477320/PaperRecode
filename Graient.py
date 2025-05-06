@@ -8,7 +8,11 @@ from collections import OrderedDict
 
 def federated_aggregation(server_model, client_gard, global_learn_rate):
     shared_parameters = list(server_model.feature_extractor.parameters())
+
+    # 更新的服务端的梯度
     service_dict = aggregate_clients(client_gard)
+
+    # 服务端目前的参数
     global_dict = server_model.state_dict()
     for key, gram in global_dict.items():
         if key == "feature_extractor.1.weight":
@@ -24,13 +28,8 @@ def federated_aggregation(server_model, client_gard, global_learn_rate):
     # 现在可以安全操作（如相加）
     update_shared_parameters = OrderedDict()
     for param_name in global_dict.keys():
-        update_shared_parameters[param_name] = client_grads_dict[param_name] + global_learn_rate * global_dict[
-            param_name]
+        update_shared_parameters[param_name] = client_grads_dict[param_name] - global_learn_rate * global_dict[param_name]
 
     server_model.load_state_dict(update_shared_parameters)
-
-    # 梯度置为0
-    for param in server_model.feature_extractor.parameters():
-        param.grad.zero_()
 
     return server_model

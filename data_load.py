@@ -145,8 +145,8 @@ def split_data_to_servers(dataset, num_servers=5):
 
     return server_data
 
-# # 使用示例
-# # 初始化生成器（使用训练集路径）
+# 使用示例
+# 初始化生成器（使用训练集路径）
 # generator = CompositeDatasetGenerator(
 #     r"C:\Users\15834\PycharmProjects\paper_recode\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-images-idx3-ubyte",
 #     r"C:\Users\15834\PycharmProjects\paper_recode\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-labels-idx1-ubyte"

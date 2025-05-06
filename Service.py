@@ -8,7 +8,7 @@ class ServerSharedModel(nn.Module):
         self.feature_extractor = nn.Sequential(
             nn.Flatten(),
             nn.Linear(36 * 36, 128),
-            nn.Sigmoid()
+            nn.LeakyReLU()
         )
 
     def forward(self, x):

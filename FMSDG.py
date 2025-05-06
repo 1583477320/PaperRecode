@@ -49,7 +49,7 @@ for round in range(num_rounds):
         # 加载本地数据
         train_loader = DataLoader(dataset, batch_size=64, shuffle=True)
         # 本地多任务训练
-        client_model, client_gard = client_local_train(client_model, train_loader)
+        client_model, client_gard = client_local_train(client_model, train_loader, num_epochs=5)
         client_models.append(client_model)
         client_models_gard[client_idx] = client_gard
 
@@ -58,7 +58,7 @@ for round in range(num_rounds):
 
     # 评估全局模型（以客户端0为例）
     client0_model = client_models[0]
-    test_loader = DataLoader(full_dataset, batch_size=64)
+    test_loader = DataLoader(client_datasets['server_0'], batch_size=64)
     client0_model.eval()
     correct_cls, total_cls, total_reg = 0, 0, 0.0
 
