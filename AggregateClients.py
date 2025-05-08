@@ -33,40 +33,34 @@ def aggregate_clients(client_dict):
             averaged[key].append(avg_tensor)
 
     average_tensors = dict(averaged)
-    return [0.5 * average_tensors["task1"][0] + 0.5 * average_tensors["task2"][0], 0.5 * average_tensors["task1"][1] + 0.5 * average_tensors["task2"][1]]
+    
+    #求凸优化
+    lambda_1,lambda_2 = optimize_tensors(average_tensors["task1"][0], average_tensors["task2"][0])
+    lambda_3,lambda_4 = optimize_tensors(average_tensors["task1"][1], average_tensors["task2"][1])
+
+    return [lambda_1 * average_tensors["task1"][0] + lambda_2 * average_tensors["task2"][0], lambda_3 * average_tensors["task1"][1] + lambda_4 * average_tensors["task2"][1]]
 
 
-def weighted_sum_parameters(aggregated_result, task_weights=(0.5, 0.5)):
-    """
-    对聚合后的参数进行加权求和
-    参数：
-        aggregated_result: aggregate_clients函数的返回结果
-        task_weights: 元组格式(task1权重, task2权重)
+def optimize_tensors(tensor1, tensor2):
+    """优化两个张量的线性组合系数，返回使范数最小的系数"""
 
-    返回：
-        {"shared_layers.0.weight": 加权和, "shared_layers.0.bias": 加权和}
-    """
+    # 定义目标函数（闭包捕获外部张量）
+    def objective(x1):
+        x2 = 1 - x1
+        combination = x1 * tensor1 + x2 * tensor2
+        return torch.norm(combination) ** 2
 
-    # 提取各任务参数
-    def extract_param(task_name, param_name):
-        for param_dict in aggregated_result[task_name]:
-            if param_name in param_dict:
-                return param_dict[param_name]
-        raise ValueError(f"参数 {param_name} 在 {task_name} 中不存在")
+    # 使用更适合单变量有界优化的Brent方法
+    result = minimize_scalar(
+        objective,
+        bounds=(0, 1),
+        method='bounded',
+        options={'xatol': 1e-8}  # 设置更高的收敛精度
+    )
 
-    # 提取weight参数
-    task1_w = extract_param("task1_head", "shared_layers.0.weight")
-    task2_w = extract_param("task2_head", "shared_layers.0.weight")
+    # 解析结果
+    x1_opt = result.x
+    x2_opt = 1 - x1_opt
+    min_norm = result.fun
 
-    # 提取bias参数
-    task1_b = extract_param("task1_head", "shared_layers.0.bias")
-    task2_b = extract_param("task2_head", "shared_layers.0.bias")
-
-    # 计算加权和（自动广播处理不同形状）
-    weight_sum = task_weights[0] * task1_w + task_weights[1] * task2_w
-    bias_sum = task_weights[0] * task1_b + task_weights[1] * task2_b
-
-    return {
-        "shared_layers.0.weight": weight_sum,
-        "shared_layers.0.bias": bias_sum
-    }
+    return x1_opt, x2_opt
