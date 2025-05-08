@@ -25,7 +25,7 @@ client_datasets = split_data_to_servers(full_dataset, num_servers=5)
 # 训练流程
 # ------------------------------
 #生成测试数据
-batch_images_test, batch_labels_test = generator.generate_batch(600)
+batch_images_test, batch_labels_test = generator.generate_batch(1200)
 full_dataset_test = CompositeDataset(batch_images, batch_labels)
 
 #loss函数记录
@@ -67,7 +67,7 @@ for batch_size in [16,64,128,256]:
             # 加载本地数据
             train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
             # 本地多任务训练
-            client_model, client_gard = client_local_train(client_model, server_model.feature_extractor.state_dict(), train_loader, num_epochs=20)
+            client_model, client_gard = client_local_train(client_model, server_model.feature_extractor.state_dict(), train_loader, num_epochs=20, local_rate=0.03)
             client_models.append(client_model)
             client_models_gard[client_idx] = client_gard
 
