@@ -4,11 +4,11 @@ import torch.nn as nn
 
 
 # -----------------客户端训练逻辑---------------
-def client_local_train(client_model, server_weights, train_loader, tasks=["task1", "task2"], num_epochs=5):
+def client_local_train(client_model, server_weights, train_loader, tasks=["task1", "task2"], num_epochs=5, local_rate=0.01):
     """客户端本地多任务训练"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     client_model.train()
-    optimizer = optim.SGD(client_model.parameters(), lr=0.01)
+    optimizer = optim.SGD(client_model.parameters(), lr=local_rate)
     criterion = nn.CrossEntropyLoss()
 
     with torch.no_grad():
