@@ -27,15 +27,6 @@ client_datasets = split_data_to_servers(full_dataset, num_servers=5)
 #生成测试数据
 batch_images_test, batch_labels_test = generator.generate_batch(600)
 full_dataset_test = CompositeDataset(batch_images, batch_labels)
-train_loader_test = DataLoader(full_dataset_test, batch_size=64, shuffle=True)
-
-# 初始化服务端模型
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-server_model = ServerSharedModel().to(device)
-client_model = ClientMTLModel(server_model).to(device)
-criterion = nn.CrossEntropyLoss()
-global_learn_rate = 0.01
-
 
 #loss函数记录
 loss_history = {'task1': {"batch_size 16":[], "batch_size 64":[],"batch_size 128":[], "batch_size 256":[]},
@@ -48,6 +39,17 @@ num_clients = 5
 num_rounds = 100
 
 for batch_size in [16,64,128,256]:
+    # 初始化服务端模型
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    server_model = ServerSharedModel().to(device)
+    client_model = ClientMTLModel(server_model).to(device)
+    criterion = nn.CrossEntropyLoss()
+    global_learn_rate = 0.01
+
+    #选取对应测试数据
+    train_loader_test = DataLoader(full_dataset_test, batch_size=batch_size, shuffle=True)
+
+    
     for round in range(num_rounds):
         print(f"======== batch_size {batch_size} ========")
         print(f"=== Federal Round {round + 1}/{num_rounds} ===")
