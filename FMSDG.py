@@ -15,7 +15,7 @@ generator = CompositeDatasetGenerator(
     r".\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-labels-idx1-ubyte"
 )
 
-# 生成一个批次
+# 生成完整的训练数据
 batch_images, batch_labels = generator.generate_batch(6000)
 full_dataset = CompositeDataset(batch_images, batch_labels)  # 使用前文生成的数据
 
@@ -32,19 +32,21 @@ full_dataset_test = CompositeDataset(batch_images, batch_labels)
 loss_history = {'task1': {"batch_size 16": [], "batch_size 64": [], "batch_size 128": [], "batch_size 256": []},
                 'task2': {"batch_size 16": [], "batch_size 64": [], "batch_size 128": [], "batch_size 256": []}}
 
-# 模拟5个客户端
-num_clients = 5
+# 超参设置
+num_servers = 5  # 模拟客户端个数
+num_rounds = 100  # 通讯轮数
+batch_size_list = [16, 64, 128, 256]  # 训练batch_size列表
+global_learn_rate = 0.01  # 服务端学习率
+num_epochs = 5  # 客户端训练轮次
+local_rate = 0.05  # 客户端学习率
 
-# 联邦训练轮数
-num_rounds = 100
-
-for batch_size in [16, 64, 128, 256]:
+for batch_size in batch_size_list:
     # 初始化服务端模型
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     server_model = ServerSharedModel().to(device)
     client_model = ClientMTLModel(server_model).to(device)
     criterion = nn.CrossEntropyLoss()
-    global_learn_rate = 0.01
+    global_learn_rate = global_learn_rate
 
     # 选取对应测试数据
     train_loader_test = DataLoader(full_dataset_test, batch_size=batch_size, shuffle=True)
@@ -66,7 +68,7 @@ for batch_size in [16, 64, 128, 256]:
             train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
             # 本地多任务训练
             client_model, client_gard = client_local_train(client_model, server_model.feature_extractor.state_dict(),
-                                                           train_loader, num_epochs=5, local_rate=0.05)
+                                                           train_loader, num_epochs=num_epochs, local_rate=local_rate)
             client_models.append(client_model)
             client_models_gard[client_idx] = client_gard
 

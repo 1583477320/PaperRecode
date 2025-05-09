@@ -2,10 +2,9 @@ import torch.optim as optim
 import torch
 import torch.nn as nn
 
-
 # -----------------客户端训练逻辑---------------
 def client_local_train(client_model, server_weights, train_loader, tasks=["task1", "task2"], num_epochs=5, local_rate=0.01):
-    """客户端本地多任务训练"""
+    # 客户端本地多任务训练
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     client_model.train()
     optimizer = optim.SGD(client_model.parameters(), lr=local_rate)
@@ -42,15 +41,14 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
             优化器的 zero_grad() 方法：在每次反向传播之前，建议使用 optimizer.zero_grad() 或手动清除梯度，以避免梯度累积。
             '''
 
-            ### 任务1的梯度
+            # 任务1的梯度
             for param in client_model.feature_extractor.parameters():
                 param.grad = None  # 清除共享层的梯度
             loss1.backward(retain_graph=True)
             grad_accumulator["task1"][0] += client_model.feature_extractor[1].weight.grad.clone()
             grad_accumulator["task1"][1] += client_model.feature_extractor[1].bias.grad.clone()
 
-
-            ### 任务2的梯度
+            # 任务2的梯度
             for param in client_model.feature_extractor.parameters():
                 param.grad = None  # 清除共享层的梯度
             loss2.backward(retain_graph=True)
@@ -61,7 +59,7 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
             # 单次反向传播（自动累加多任务梯度）
             total_loss.backward()  # loss1和loss2的梯度自动叠加
 
-            # 更新参数（仅一次）
+            # 更新参数
             optimizer.step()
 
     # 计算每个任务的平均梯度
