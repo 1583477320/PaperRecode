@@ -8,7 +8,7 @@ import torch.optim as optim
 
 
 def federated_aggregation(server_model, client_gard, global_learn_rate=0.01):
-    optimizer = optim.SGD(server_model.parameters(), lr=global_learn_rate)
+    optimizer = optim.SGD(server_model.parameters(), lr=global_learn_rate, momentum=0.9)
 
     # 更新的服务端的梯度
     service_dict = aggregate_clients(client_gard)

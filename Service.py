@@ -7,7 +7,7 @@ class ServerSharedModel(nn.Module):
         super().__init__()
         self.feature_extractor = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(36 * 36, 128),
+            nn.Linear(36 * 36, 256),
             nn.LeakyReLU()
         )
 
