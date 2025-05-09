@@ -120,7 +120,7 @@ plt.ylabel("Average Local Loss")
 plt.legend()
 plt.grid(False)
 # 保存图像
-plt.savefig('task1_loss_local0.03_global0.01_se5_ra5.png', dpi=300, bbox_inches='tight')
+plt.savefig('task2_loss_local{}_global{}_se{}_ra{}.png'.format(local_rate, global_learn_rate, num_servers,num_epochs), dpi=300, bbox_inches='tight')
 
 plt.figure(figsize=(10, 6))
 task2_loss = loss_history["task2"]
@@ -133,5 +133,5 @@ plt.legend()
 plt.grid(False)
 
 # 保存图像
-plt.savefig('task2_loss_local0.03_global0.01_se5_ra5.png', dpi=300, bbox_inches='tight')
+plt.savefig('task2_loss_local{}_global{}_se{}_ra{}.png'.format(local_rate, global_learn_rate, num_servers,num_epochs), dpi=300, bbox_inches='tight')
 plt.show()
