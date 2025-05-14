@@ -69,3 +69,4 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
             grad / num_epochs*len(train_loader) for grad in grad_accumulator[task_id]
         ]
     return client_model, avg_gradients
+

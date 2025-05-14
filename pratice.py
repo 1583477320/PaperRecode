@@ -24,21 +24,21 @@ local_rate = 0.1  # 客户端学习率
 # 准备原始数据集
 # 合成数据
 generator = CompositeDatasetGenerator(
-    r"C:\Users\15834\PycharmProjects\paper_recode\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-images-idx3-ubyte",
-    r"C:\Users\15834\PycharmProjects\paper_recode\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-labels-idx1-ubyte"
+    r".\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-images-idx3-ubyte",
+    r".\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-labels-idx1-ubyte"
 )
 
 # 生成完整的训练数据
-batch_images, batch_labels = generator.generate_batch(6000)
+batch_images, batch_labels = generator.generate_batch(1000)
 full_dataset = CompositeDataset(batch_images, batch_labels)  # 使用前文生成的数据
 
 # 分配数据到5个服务器
-client_datasets = split_data_to_servers(full_dataset, num_servers=10)
+client_datasets = split_data_to_servers(full_dataset, num_servers=num_servers)
 
 # 训练流程
 # ------------------------------
 # 生成测试数据
-batch_images_test, batch_labels_test = generator.generate_batch(1200)
+batch_images_test, batch_labels_test = generator.generate_batch(256)
 full_dataset_test = CompositeDataset(batch_images_test, batch_labels_test)
 
 # loss函数记录
@@ -72,21 +72,43 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False     # 关闭自动优化
 
 for batch_size in batch_size_list:
+    print(f"======== batch_size {batch_size} ========")
     # 初始化服务端模型
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     server_model = ServerSharedModel().to(device)
     server_model.apply(init_weights)  # 参数固定初始化
     client_model = ClientMTLModel(server_model).to(device)
+    client_model.apply(init_weights)
     criterion = nn.CrossEntropyLoss()
     global_learn_rate = global_learn_rate
 
-# 选取对应测试数据
-    train_loader_test = DataLoader(full_dataset_test, batch_size=batch_size, shuffle=True,worker_init_fn=seed_worker,
-        generator=g)
+    # 选取对应测试数据
+    train_loader_test = DataLoader(full_dataset_test, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker,
+                                   generator=g)
+
+    #loss起始
+    init_loss_task1 = 0
+    init_loss_task2 = 0
+    with torch.no_grad():
+        for data, (target_task1, target_task2) in train_loader_test:
+            data = data.to(device)
+            pred_task1, pred_task2 = client_model(data)
+
+            # loss
+            init_loss_task1 += criterion(pred_task1, target_task1)
+            init_loss_task2 += criterion(pred_task2, target_task2)
+    init_loss_task1 /= len(train_loader_test.dataset)
+    init_loss_task1 *= batch_size / 16
+    loss_history['task1']["batch_size {}".format(batch_size)].append(init_loss_task1)
+    print("Client 0 Test - task1 loss init:{}".format(init_loss_task1), "task1 loss:{}".format(init_loss_task1))
+
+    init_loss_task2 /= len(train_loader_test.dataset)
+    init_loss_task2 *= batch_size / 16
+    loss_history['task2']["batch_size {}".format(batch_size)].append(init_loss_task2)
+    print("Client 0 Test - task2 loss init:{}".format(init_loss_task2), "task2 loss:{}".format(init_loss_task2))
 
     for round in range(1):
-        print(f"======== batch_size {batch_size} ========")
         print(f"=== Federal Round {round + 1}/{num_rounds} ===")
         # 统计量
         total_loss_task1 = 0
@@ -99,7 +121,7 @@ for batch_size in batch_size_list:
         client_models_gard = {}
         for client_idx, dataset in client_datasets.items():
             # 加载本地数据
-            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,worker_init_fn=seed_worker,
+            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,worker_init_fn=seed_worker,
         generator=g)
             # 本地多任务训练
             client_model, client_gard = client_local_train(client_model, server_model.feature_extractor.state_dict(),
@@ -108,7 +130,7 @@ for batch_size in batch_size_list:
             client_models_gard[client_idx] = client_gard
 
         # 服务端聚合共享层参数
-        server_model = federated_aggregation(server_model, client_models_gard, global_learn_rate)
+        server_model = federated_aggregation(server_model, client_models_gard, global_learn_rate=global_learn_rate)
 
         # 评估全局模型（以客户端0为例）
         client0_model = client_models[0].to(device)
@@ -132,9 +154,11 @@ for batch_size in batch_size_list:
                 total_correct_task2 += pred2.eq(target_task2.view_as(pred2)).sum().item()
 
         total_loss_task1 /= len(train_loader_test.dataset)
+        total_loss_task1 *= batch_size/16
         loss_history['task1']["batch_size {}".format(batch_size)].append(total_loss_task1)
 
         total_loss_task2 /= len(train_loader_test.dataset)
+        total_loss_task2 *= batch_size / 16
         loss_history['task2']["batch_size {}".format(batch_size)].append(total_loss_task2)
 
         print(
