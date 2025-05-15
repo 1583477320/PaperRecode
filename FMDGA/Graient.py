@@ -1,5 +1,4 @@
-from AggregateClients import aggregate_clients
-from collections import OrderedDict
+from FMDGA.AggregateClients import aggregate_clients
 import torch.optim as optim
 
 '''

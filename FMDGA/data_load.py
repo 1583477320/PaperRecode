@@ -82,7 +82,7 @@ def generate_composite_image(img1, img2):
 # 数据初始化
 class CompositeDataset(Dataset):
     def __init__(self, images, labels):
-        self.images = images.astype(np.float32) / 255.0  # 归一化到[0,1]
+        self.images = images  # 归一化到[0,1]
         self.labels = labels
 
     def __len__(self):

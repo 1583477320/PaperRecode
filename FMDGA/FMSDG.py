@@ -1,9 +1,9 @@
-from Client import client_local_train
-from ClientModel import ClientMTLModel
+from FMDGA.Client import client_local_train
+from FMDGA.ClientModel import ClientMTLModel
 import torch
 import torch.nn as nn
-from data_load import CompositeDatasetGenerator, CompositeDataset, split_data_to_servers
-from torch.utils.data import Dataset, DataLoader, Subset
+from FMDGA.data_load import CompositeDatasetGenerator, CompositeDataset, split_data_to_servers
+from torch.utils.data import DataLoader
 from Service import ServerSharedModel
 from Graient import federated_aggregation
 import matplotlib.pyplot as plt
@@ -23,7 +23,7 @@ local_rate = 0.1  # 客户端学习率
 # 准备原始数据集
 # 合成数据
 generator = CompositeDatasetGenerator(
-    r".\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-images-idx3-ubyte",
+    r"../OpenDataLab___MultiMNIST/raw/multi-mnist/data/train-images-idx3-ubyte",
     r".\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-labels-idx1-ubyte"
 )
 
