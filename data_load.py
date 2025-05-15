@@ -89,7 +89,8 @@ class CompositeDataset(Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
-        image = torch.tensor(self.images[idx].reshape(36 * 36))  # 展平为1296维
+        # image = torch.tensor(self.images[idx].reshape(36 * 36))  # 展平为1296维
+        image = torch.tensor(self.images[idx])  # 利用卷积
         label1 = torch.tensor(self.labels[idx][0], dtype=torch.long)
         label2 = torch.tensor(self.labels[idx][1], dtype=torch.long)
         return image, (label1, label2)

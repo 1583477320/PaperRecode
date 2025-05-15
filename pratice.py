@@ -1,169 +1,257 @@
-from Client import client_local_train
-from ClientModel import ClientMTLModel
 import torch
 import torch.nn as nn
-from data_load import CompositeDatasetGenerator, CompositeDataset, split_data_to_servers
-from torch.utils.data import Dataset, DataLoader, Subset
-from Service import ServerSharedModel
-from Graient import federated_aggregation
-import matplotlib.pyplot as plt
+import torchvision
+import torchvision.transforms as transforms
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import os
+from torch.autograd import Variable
+import pandas as pd
+import math
+import sklearn.preprocessing as sk
+from sklearn.model_selection import KFold
+from sklearn import metrics
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.linear_model import Ridge
+from sklearn.linear_model import RidgeCV
+from sklearn.model_selection import train_test_split
 import random
+from Service import ServerSharedModel
+from torch.utils.data import DataLoader
+from ClientModel import ClientMTLModel
+from data_load import CompositeDatasetGenerator, CompositeDataset, split_data_to_servers
+import copy
+import torch.nn.functional as F
 
+seed = 42
+random.seed(seed)
+torch.cuda.manual_seed_all(seed)
 
-# 超参设置
-num_servers = 10  # 模拟客户端个数
-num_rounds = 100  # 通讯轮数
-batch_size_list = [16, 64, 128, 256]  # 训练batch_size列表
-global_learn_rate = 0.1  # 服务端学习率
-num_epochs = 10  # 客户端训练轮次
-local_rate = 0.1  # 客户端学习率
-
-
+N = 10000
+M = 100
+c = 0.5
+p = 0.9
+k = np.random.randn(M)
+u1 = np.random.randn(M)
+u1 -= u1.dot(k) * k / np.linalg.norm(k)**2
+u1 /= np.linalg.norm(u1)
+k /= np.linalg.norm(k)
+u2 = k
+w1 = c*u1
+w2 = c*(p*u1+np.sqrt((1-p**2))*u2)
+X = np.random.normal(0, 1, (N, M))
+eps1 = np.random.normal(0, 0.01)
+eps2 = np.random.normal(0, 0.01)
+Y1 = np.matmul(X, w1) + np.sin(np.matmul(X, w1))+eps1
+Y2 = np.matmul(X, w2) + np.sin(np.matmul(X, w2))+eps2
+split = list(np.random.permutation(N))
 
 # 准备原始数据集
 # 合成数据
 generator = CompositeDatasetGenerator(
-    r".\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-images-idx3-ubyte",
-    r".\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-labels-idx1-ubyte"
+    r"./OpenDataLab___MultiMNIST/raw/multi-mnist/data/train-images-idx3-ubyte",
+    r"./OpenDataLab___MultiMNIST/raw/multi-mnist/data/train-labels-idx1-ubyte"
 )
 
-# 生成完整的训练数据
-batch_images, batch_labels = generator.generate_batch(1000)
+# 生成一个批次
+batch_images, batch_labels = generator.generate_batch(6000)
 full_dataset = CompositeDataset(batch_images, batch_labels)  # 使用前文生成的数据
 
-# 分配数据到5个服务器
-client_datasets = split_data_to_servers(full_dataset, num_servers=num_servers)
-
-# 训练流程
-# ------------------------------
-# 生成测试数据
+#生成测试数据
 batch_images_test, batch_labels_test = generator.generate_batch(256)
-full_dataset_test = CompositeDataset(batch_images_test, batch_labels_test)
-
-# loss函数记录
-loss_history = {'task1': {"batch_size 16": [], "batch_size 64": [], "batch_size 128": [], "batch_size 256": []},
-                'task2': {"batch_size 16": [], "batch_size 64": [], "batch_size 128": [], "batch_size 256": []}}
-
-# 定义初始化函数
-def init_weights(m):
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)
-        nn.init.zeros_(m.bias)
-
-# 固定 DataLoader 的生成器
-g = torch.Generator()
-g.manual_seed(42)
-
-def seed_worker(worker_id):
-    worker_seed = 42
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
+full_dataset_test = CompositeDataset(batch_images, batch_labels)
 
 
-# 设置所有随机种子
-def set_seed(seed):
-    torch.manual_seed(seed)       # CPU随机种子
-    torch.cuda.manual_seed(seed)  # GPU随机种子
-    torch.cuda.manual_seed_all(seed)  # 多GPU时
-    np.random.seed(seed)          # NumPy随机种子
-    random.seed(seed)             # Python随机种子
-    torch.backends.cudnn.deterministic = True  # 确保CUDA卷积算法确定
-    torch.backends.cudnn.benchmark = False     # 关闭自动优化
+input_size, feature_size = 36*36, 36*36
+shared_layer_size = 64
+tower_h1 = 32
+tower_h2 = 10
+output_size = 1
+LR = 0.01
+epoch = 100
+mb_size = 100
+cost1tr = []
+cost2tr = []
+cost1D = []
+cost2D = []
+cost1ts = []
+cost2ts = []
+costtr = []
+costD = []
+costts = []
+
+# class MTLnet(nn.Module):
+#     def __init__(self):
+#         super(MTLnet, self).__init__()
+#
+#         self.sharedlayer = nn.Sequential(
+#             nn.Linear(feature_size, shared_layer_size),
+#             nn.ReLU(),
+#             nn.Dropout()
+#         )
+#         self.tower1 = nn.Sequential(
+#             nn.Linear(shared_layer_size, tower_h1),
+#             nn.ReLU(),
+#             nn.Dropout(),
+#             nn.Linear(tower_h1, tower_h2)
+#         )
+#         self.tower2 = nn.Sequential(
+#             nn.Linear(shared_layer_size, tower_h1),
+#             nn.ReLU(),
+#             nn.Dropout(),
+#             nn.Linear(tower_h1, tower_h2)
+#         )
+
+class ClientMTLModel(nn.Module):
+    def __init__(self, server_model):
+        super().__init__()
+        # 继承服务端的共享特征层
+        self.feature_extractor = copy.deepcopy(server_model.feature_extractor)
+        # 本地任务头
+        self.task1_head = nn.Sequential(
+            nn.Linear(256, tower_h1),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(tower_h1, tower_h2)
+        )  # 任务1
+        self.task2_head = nn.Sequential(
+            nn.Linear(256, tower_h1),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(tower_h1, tower_h2)
+        )  # 任务2
+
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        return self.task1_head(features), self.task2_head(features)
+
+class CNNMnist(nn.Module):
+    def __init__(self):
+        super(CNNMnist, self).__init__()
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+        self.conv2_drop = nn.Dropout2d()
+        self.fc1 = nn.Linear(320, 50)
+        self.task1_head = nn.Linear(50, tower_h2)
+        self.task2_head = nn.Linear(50, tower_h2)
+
+    def forward(self, x):
+        x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+        x = x.view(-1, x.shape[1]*x.shape[2]*x.shape[3])
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, training=self.training)
+        return self.task1_head(x), self.task2_head(x)
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# server_model = ServerSharedModel().to(device)
+# MTL = ClientMTLModel(server_model)
+MTL = CNNMnist()
+optimizer = torch.optim.Adam(MTL.parameters(), lr=LR)
+loss_func = nn.CrossEntropyLoss()
+
+#loss函数记录
+loss_history = {'task1': {"batch_size 16":[], "batch_size 64":[],"batch_size 128":[], "batch_size 256":[]},
+                'task2': {"batch_size 16":[], "batch_size 64":[],"batch_size 128":[], "batch_size 256":[]}}
+
+MTL.train()
+batch_size_list = [64,128,256]
 
 for batch_size in batch_size_list:
-    print(f"======== batch_size {batch_size} ========")
-    # 初始化服务端模型
-    set_seed(42)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    server_model = ServerSharedModel().to(device)
-    server_model.apply(init_weights)  # 参数固定初始化
-    client_model = ClientMTLModel(server_model).to(device)
-    client_model.apply(init_weights)
-    criterion = nn.CrossEntropyLoss()
-    global_learn_rate = global_learn_rate
+    print('--------batch_size{}-----------------'.format(batch_size))
+    for it in range(epoch):
+        epoch_cost = []
+        epoch_cost1 = []
+        epoch_cost2 = []
+        loss1D = 0
+        loss2D = 0
+        # num_minibatches = int(input_size / mb_size)
+        # minibatches = random_mini_batches(X_train, Y1_train, Y2_train, mb_size)
+        minibatches = DataLoader(full_dataset, batch_size=batch_size, shuffle=True)
+        for minibatch in minibatches:
+            XE,(YE1, YE2) = minibatch
 
-    # 选取对应测试数据
-    train_loader_test = DataLoader(full_dataset_test, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker,
-                                   generator=g)
+            Yhat1, Yhat2 = MTL(XE)
+            l1 = loss_func(Yhat1, YE1)
+            l2 = loss_func(Yhat2, YE2)
+            loss = (l1 + l2) / 2
 
-    #loss起始
-    init_loss_task1 = 0
-    init_loss_task2 = 0
-    with torch.no_grad():
-        for data, (target_task1, target_task2) in train_loader_test:
-            data = data.to(device)
-            pred_task1, pred_task2 = client_model(data)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-            # loss
-            init_loss_task1 += criterion(pred_task1, target_task1)
-            init_loss_task2 += criterion(pred_task2, target_task2)
-    init_loss_task1 /= len(train_loader_test.dataset)
-    init_loss_task1 *= batch_size / 16
-    loss_history['task1']["batch_size {}".format(batch_size)].append(init_loss_task1)
-    print("Client 0 Test - task1 loss init:{}".format(init_loss_task1), "task1 loss:{}".format(init_loss_task1))
+            epoch_cost.append(loss)
+            epoch_cost1.append(l1)
+            epoch_cost2.append(l2)
+        # costtr.append(torch.mean(torch.tensor(epoch_cost)))
+        # cost1tr.append(torch.mean(torch.tensor(epoch_cost1)))
+        # cost2tr.append(torch.mean(torch.tensor(epoch_cost2)))
 
-    init_loss_task2 /= len(train_loader_test.dataset)
-    init_loss_task2 *= batch_size / 16
-    loss_history['task2']["batch_size {}".format(batch_size)].append(init_loss_task2)
-    print("Client 0 Test - task2 loss init:{}".format(init_loss_task2), "task2 loss:{}".format(init_loss_task2))
-
-    for round in range(1):
-        print(f"=== Federal Round {round + 1}/{num_rounds} ===")
-        # 统计量
-        total_loss_task1 = 0
-        total_loss_task2 = 0
-        total_correct_task1 = 0
-        total_correct_task2 = 0
-
-        # 客户端本地训练
-        client_models = []
-        client_models_gard = {}
-        for client_idx, dataset in client_datasets.items():
-            # 加载本地数据
-            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,worker_init_fn=seed_worker,
-        generator=g)
-            # 本地多任务训练
-            client_model, client_gard = client_local_train(client_model, server_model.feature_extractor.state_dict(),
-                                                           train_loader, num_epochs=num_epochs, local_rate=local_rate)
-            client_models.append(client_model)
-            client_models_gard[client_idx] = client_gard
-
-        # 服务端聚合共享层参数
-        server_model = federated_aggregation(server_model, client_models_gard, global_learn_rate=global_learn_rate)
-
-        # 评估全局模型（以客户端0为例）
-        client0_model = client_models[0].to(device)
-        client0_model.eval()
-
+        loss_history['task1']["batch_size {}".format(batch_size)].append(torch.mean(torch.tensor(epoch_cost1)))
+        loss_history['task2']["batch_size {}".format(batch_size)].append(torch.mean(torch.tensor(epoch_cost2)))
         with torch.no_grad():
-            for data, (target_task1, target_task2) in train_loader_test:
-                data = data.to(device)
-                pred_task1, pred_task2 = client0_model(data)
+            data_test = DataLoader(full_dataset_test, batch_size=batch_size,shuffle=True)
+            for X_valid,(Y1_valid, Y2_valid) in data_test:
+                Yhat1D, Yhat2D = MTL(X_valid)
+                l1D = loss_func(Yhat1D, Y1_valid)
+                l2D = loss_func(Yhat2D, Y2_valid)
+                loss1D += l1D
+                loss2D += l2D
+            cost1D.append(torch.mean(loss1D))
+            cost2D.append(torch.mean(loss2D))
+            costD.append((torch.mean(loss1D) + torch.mean(loss2D)) / 2)
+            print('Iter-{}-{}; Total loss: {:.4}'.format(batch_size, it, loss))
 
-                # loss
-                total_loss_task1 += criterion(pred_task1, target_task1)
+    # plt.figure(figsize=(10, 6))
+    # plt.plot(costtr, '-r'
+    #          # ,costD, '-b'
+    #          )
+    # plt.ylabel('total cost')
+    # plt.xlabel('iterations (per tens)')
+    # plt.show()
+    #
+    # plt.figure(figsize=(10, 6))
+    # plt.plot(cost1tr, '-r'
+    #          # , cost1D, '-b'
+    #          )
+    # plt.ylabel('task 1 cost')
+    # plt.xlabel('iterations (per tens)')
+    # plt.show()
+    #
+    # plt.figure(figsize=(10, 6))
+    # plt.plot(cost2tr, '-r'
+    #          # , cost2D, '-b'
+    #          )
+    # plt.ylabel('task 2 cost')
+    # plt.xlabel('iterations (per tens)')
+    # plt.show()
 
-                total_loss_task2 += criterion(pred_task2, target_task2)
+# 绘制损失曲线
+plt.figure(figsize=(10, 6))
+task1_loss = loss_history["task1"]
+for i in batch_size_list:
+    plt.plot(task1_loss["batch_size {}".format(i)], label="batch_size {}".format(i))
+plt.title("Task1 Loss")
+plt.xlabel("Global Epoch")
+plt.ylabel("Average Local Loss")
+plt.legend()
+plt.grid(False)
+# 保存图像
+plt.savefig('task1_loss_curve.png', dpi=300, bbox_inches='tight')
 
-                # correct
-                pred1 = pred_task1.argmax(dim=1, keepdim=True)
-                total_correct_task1 += pred1.eq(target_task1.view_as(pred1)).sum().item()
 
-                pred2 = pred_task2.argmax(dim=1, keepdim=True)
-                total_correct_task2 += pred2.eq(target_task2.view_as(pred2)).sum().item()
+plt.figure(figsize=(10, 6))
+task2_loss = loss_history["task2"]
+for i in batch_size_list:
+    plt.plot(task2_loss["batch_size {}".format(i)], label="batch_size {}".format(i))
+plt.title("Task2 Loss")
+plt.xlabel("Global Epoch")
+plt.ylabel("Average Local Loss")
+plt.legend()
+plt.grid(False)
 
-        total_loss_task1 /= len(train_loader_test.dataset)
-        total_loss_task1 *= batch_size/16
-        loss_history['task1']["batch_size {}".format(batch_size)].append(total_loss_task1)
-
-        total_loss_task2 /= len(train_loader_test.dataset)
-        total_loss_task2 *= batch_size / 16
-        loss_history['task2']["batch_size {}".format(batch_size)].append(total_loss_task2)
-
-        print(
-            "Client 0 Test - task1 loss:{}".format(total_loss_task1), "task2 loss:{}".format(total_loss_task2))
-        print(
-            "Client 0 Test - task1 correct:{}".format(total_correct_task1 / len(train_loader_test.dataset)),
-            "task2 correct:{}".format(total_correct_task2 / len(train_loader_test.dataset)))
-        print("----------------------------------------------")
+# 保存图像
+plt.savefig('task2_loss_curve.png', dpi=300, bbox_inches='tight')
+plt.show()
