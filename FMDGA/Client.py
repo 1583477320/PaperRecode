@@ -10,12 +10,11 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
     optimizer = optim.SGD(client_model.parameters(), lr=local_rate)
     criterion = nn.CrossEntropyLoss()
 
-    with torch.no_grad():
-        client_model.feature_extractor.load_state_dict(server_weights)
+    client_model.feature_extractor.load_state_dict(server_weights)
 
     # 初始化梯度累积器：按任务存储共享层梯度
     grad_accumulator = {
-        task_id: [torch.zeros_like(p) for p in client_model.feature_extractor.parameters()]
+        task_id: {name: [] for name, param in client_model.named_parameters() if "feature_extractor" in name}
         for task_id in tasks
     }
     #记录损失
@@ -37,7 +36,7 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
             # 计算损失
             loss1 = criterion(output1, target_task1)
             loss2 = criterion(output2, target_task2)
-            total_loss = loss1 + loss2
+            total_loss = (loss1 + loss2) / 2
 
             '''
             手动累积梯度（如果需要记录各任务梯度）,分别查看每个任务对共享层的梯度,retain_graph=True：在反向传播时，设置 retain_graph=True 以保留计算图，否则计算图会在第一次反向传播后被释放，无法进行第二次反向传播。
@@ -46,36 +45,70 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
             '''
 
             # 任务1的梯度
-            for param in client_model.feature_extractor.parameters():
-                param.grad = None  # 清除共享层的梯度
+            optimizer.zero_grad()  # 清除共享层的梯度
             loss1.backward(retain_graph=True)
-            grad_accumulator["task1"][0] += client_model.feature_extractor[1].weight.grad.clone()
-            grad_accumulator["task1"][1] += client_model.feature_extractor[1].bias.grad.clone()
+
+            grads_task1 = {}
+            for name, param in client_model.named_parameters():
+                if param.grad is not None:
+                    grads_task1[name] = param.grad.clone()
 
             # 任务2的梯度
-            for param in client_model.feature_extractor.parameters():
-                param.grad = None  # 清除共享层的梯度
-            loss2.backward(retain_graph=True)
-            grad_accumulator["task2"][0] += client_model.feature_extractor[1].weight.grad.clone()
-            grad_accumulator["task2"][1] += client_model.feature_extractor[1].bias.grad.clone()
+            optimizer.zero_grad()  # 清除共享层的梯度
+            loss2.backward()
+            grads_task2 = {}
+            for name, param in client_model.named_parameters():
+                if param.grad is not None:
+                    grads_task2[name] = param.grad.clone()
 
             optimizer.zero_grad()
-            # 单次反向传播（自动累加多任务梯度）
-            total_loss.backward()  # loss1和loss2的梯度自动叠加
+            auto_up = False
+            if auto_up:
+                # # 单次反向传播（自动累加多任务梯度）
+                total_loss.backward()  # loss1和loss2的梯度自动叠加
+            else:
+                # 手动合并梯度：共享层取均值，任务层保留各自的梯度
+                for name, param in client_model.named_parameters():
+                    if "feature_extractor" in name:  # 共享层
+                        if name in grads_task1 and name in grads_task2:
+                            # 共享层的梯度取均值
+                            param.grad = (grads_task1[name] + grads_task2[name]) / 2
+                    else:  # 任务层
+                        # 任务层的梯度保留各自的梯度
+                        if name in grads_task1:
+                            param.grad = grads_task1[name]
+                        elif name in grads_task2:
+                            param.grad = grads_task2[name]
+
+            # 梯度记录
+            for name, param in client_model.named_parameters():
+                if "feature_extractor" in name:  # 共享层
+                    if name in grads_task1:
+                        # 共享层的梯度取均值
+                        grad_accumulator['task1']["{}".format(name)].append(param)
 
             # 更新参数
             optimizer.step()
 
-            #记录损失
+            # 记录损失
             task1_batch_loss.append(loss1.item())
             task2_batch_loss.append(loss2.item())
+
         task1_loss.append(sum(task1_batch_loss) / len(task1_batch_loss))
         task2_loss.append(sum(task2_batch_loss) / len(task2_batch_loss))
     # 计算每个任务的平均梯度
-    avg_gradients = {}
-    for task_id in tasks:
-        avg_gradients[task_id] = [
-            grad / num_epochs*len(train_loader) for grad in grad_accumulator[task_id]
-        ]
-    return client_model, avg_gradients, (sum(task1_loss) / len(task1_loss),sum(task2_loss) / len(task2_loss))
+    # 初始化平均结果字典
+    avg_grad = {}
 
+    # 遍历每个name
+    for name in grad_accumulator['task1'].keys():
+        # 收集所有任务中该name的张量
+        tensors = [grad_accumulator[task][name] for task in grad_accumulator.keys()]
+        # 计算平均
+        avg = sum(tensors[0]) / len(tensors[0])
+        # 存储到avg_grad字典中
+        if name not in avg_grad:
+            avg_grad[name] = {}
+        avg_grad[name] = avg
+
+    return client_model, avg_grad, (sum(task1_loss) / len(task1_loss),sum(task2_loss) / len(task2_loss))
