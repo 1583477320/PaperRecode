@@ -1,7 +1,7 @@
 import torch.optim as optim
 import torch
 import torch.nn as nn
-
+from tqdm import tqdm
 # -----------------客户端训练逻辑---------------
 def client_local_train(client_model, server_weights, train_loader, tasks=["task1", "task2"], num_epochs=5, local_rate=0.01):
     # 客户端本地多任务训练
@@ -18,11 +18,15 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
         task_id: [torch.zeros_like(p) for p in client_model.feature_extractor.parameters()]
         for task_id in tasks
     }
-    for _ in range(num_epochs):
-        for data, (target_task1, target_task2) in train_loader:
-            data, target_task1, target_task2 = data.to(device), target_task1.to(device), target_task2.to(
+    #记录损失
+    task1_loss = []
+    task2_loss = []
+    for _ in tqdm(range(num_epochs)):
+        task1_batch_loss = []
+        task2_batch_loss = []
+        for data, target in train_loader:
+            data, target_task1, target_task2 = data.to(device), target.T[0].to(device), target.T[1].to(
                 device)
-            optimizer.zero_grad()
             # total_grad = [torch.zeros_like(param) for param in client_model.feature_extractor.parameters()]
             # total_loss = 0
 
@@ -62,11 +66,16 @@ def client_local_train(client_model, server_weights, train_loader, tasks=["task1
             # 更新参数
             optimizer.step()
 
+            #记录损失
+            task1_batch_loss.append(loss1.item())
+            task2_batch_loss.append(loss2.item())
+        task1_loss.append(sum(task1_batch_loss) / len(task1_batch_loss))
+        task2_loss.append(sum(task2_batch_loss) / len(task2_batch_loss))
     # 计算每个任务的平均梯度
     avg_gradients = {}
     for task_id in tasks:
         avg_gradients[task_id] = [
             grad / num_epochs*len(train_loader) for grad in grad_accumulator[task_id]
         ]
-    return client_model, avg_gradients
+    return client_model, avg_gradients, (sum(task1_loss) / len(task1_loss),sum(task2_loss) / len(task2_loss))
 

@@ -4,11 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from torch.utils.data import DataLoader
-from FMDGA.data_load import CompositeDataset
+from FMDGA.data_load import CompositeDataset,generate_multi_mnist
 import copy
 import torch.nn.functional as F
 from tqdm import tqdm
-from Task import generate_multi_mnist
 
 seed = 42
 random.seed(seed)

@@ -3,81 +3,99 @@ import numpy as np
 import torch
 import struct
 import random
+import os
+import numpy as np
+import torch
+from torchvision import datasets, transforms
+from PIL import Image
 
 '''
 数据生成，将mnist数据拼接
 '''
-
-
 # 读取MNIST图像和标签的函数
-def read_mnist_images(path):
-    with open(path, 'rb') as f:
-        magic, size = struct.unpack('>II', f.read(8))
-        rows, cols = struct.unpack('>II', f.read(8))
-        data = np.frombuffer(f.read(), dtype=np.uint8)
-        return data.reshape(size, rows, cols)
+def generate_multi_mnist(num_samples, output_dir, train=True,save_images=False):
+    """生成 MultiMNIST 数据集"""
+    # 确保输出目录存在
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
+    # 加载 MNIST 数据集
+    mnist = datasets.MNIST(
+        root='./Mnist',
+        train=train,
+        download=False,
+        transform=transforms.Compose([
+            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
 
-def read_mnist_labels(path):
-    with open(path, 'rb') as f:
-        magic, size = struct.unpack('>II', f.read(8))
-        return np.frombuffer(f.read(), dtype=np.uint8)
+    # 将数据集按类别分组
+    class_images = {i: [] for i in range(10)}
+    for img, label in mnist:
+        class_images[label].append(img)
 
+    # 初始化图片和标签列表
+    images = []
+    labels = []
 
-# ==========核心叠加生成函数==========
-def generate_composite_image(img1, img2):
-    """
-    生成复合图像的核心函数
-    返回36x36的叠加图像和对应的位移信息
-    """
-    # 创建36x36画布
-    canvas = np.zeros((36, 36), dtype=np.uint8)
+    # 生成 num_samples 个样本
+    for i in range(num_samples):
+        # 随机选择两个不同的类别
+        label1 = np.random.randint(0, 10)
+        label2 = label1
+        while label2 == label1:
+            label2 = np.random.randint(0, 10)
 
-    # 生成第一个数字的位移（-4到+4之间）
-    dx1 = random.randint(-4, 4)
-    dy1 = random.randint(-4, 4)
+        # 随机选择两个不同类别的图片
+        img1 = class_images[label1][np.random.randint(0, len(class_images[label1]))]
+        img2 = class_images[label2][np.random.randint(0, len(class_images[label2]))]
 
-    # 生成第二个数字的位移（确保80%重叠）
-    valid = False
-    attempts = 0
-    while not valid and attempts < 100:
-        dx2 = random.randint(-4, 4)
-        dy2 = random.randint(-4, 4)
+        # 将图片转换为 numpy 数组
+        img1_np = img1.numpy().squeeze()
+        img2_np = img2.numpy().squeeze()
 
-        # 计算相对位移
-        delta_x = dx2 - dx1
-        delta_y = dy2 - dy1
+        # 生成 36x36 的画布
+        canvas = np.zeros((36, 36), dtype=np.float32)
 
-        # 计算重叠面积
-        w_overlap = 20 - abs(delta_x)
-        h_overlap = 20 - abs(delta_y)
-        if w_overlap > 0 and h_overlap > 0:
-            overlap_area = w_overlap * h_overlap
-            if overlap_area >= 320:  # 80% of 20x20
-                valid = True
-        attempts += 1
+        # 随机移动 img1 和 img2，最多四个像素
+        def random_shift(img):
+            if img is img1_np:
+                shift_x = np.random.randint(-6, 0)
+                shift_y = np.random.randint(0, 6)
+                shifted_img = np.roll(img, shift_x, axis=1)
+                shifted_img = np.roll(shifted_img, shift_y, axis=0)
+            else:
+                shift_x = np.random.randint(0, 6)
+                shift_y = np.random.randint(-6, 0)
+                shifted_img = np.roll(img, shift_x, axis=1)
+                shifted_img = np.roll(shifted_img, shift_y, axis=0)
+            return shifted_img
 
-    # 如果无法找到有效位移，则使用相同位置
-    if not valid:
-        dx2 = dx1
-        dy2 = dy1
+        img1_shifted = random_shift(img1_np)
+        img2_shifted = random_shift(img2_np)
 
-    # 将数字放入画布（使用20x20中心区域）
-    x1 = 8 + dx1  # 36/2 - 10 = 8
-    y1 = 8 + dy1
-    x2 = 8 + dx2
-    y2 = 8 + dy2
+        # 叠加两张图片
+        combined_img = np.minimum(img1_shifted + img2_shifted, 1.0)  # 防止像素值超过 1.0
 
-    # 叠加第一个数字（取像素最大值）
-    canvas[x1:x1 + 20, y1:y1 + 20] = np.maximum(canvas[x1:x1 + 20, y1:y1 + 20],
-                                                img1[4:24, 4:24])  # 从28x28取中心20x20
+        # 将图片转换回 Tensor
+        combined_img = torch.from_numpy(combined_img).unsqueeze(0)
 
-    # 叠加第二个数字
-    canvas[x2:x2 + 20, y2:y2 + 20] = np.maximum(canvas[x2:x2 + 20, y2:y2 + 20],
-                                                img2[4:24, 4:24])
+        # 保存图像和标签
+        if save_images:
+            img_path = os.path.join(output_dir, f"sample_{i}.png")
+            label_path = os.path.join(output_dir, f"sample_{i}_label.txt")
+            Image.fromarray((combined_img.numpy().squeeze() * 255).astype(np.uint8)).save(img_path)
+            with open(label_path, 'w') as f:
+                f.write(f"{label1},{label2}")
 
-    return canvas
+        # 将图片和标签添加到对应列表中
+        images.append(combined_img)
+        labels.append((label1, label2))
 
+    # 返回图片列表和标签列表
+    return images, labels
 
 # 数据初始化
 class CompositeDataset(Dataset):
@@ -96,41 +114,6 @@ class CompositeDataset(Dataset):
         return image, (label1, label2)
 
 
-# ==========完整数据生成流程============
-class CompositeDatasetGenerator:
-    def __init__(self, image_path, label_path):
-        self.images = read_mnist_images(image_path)
-        self.labels = read_mnist_labels(label_path)
-
-        # 预处理：为每个类别建立索引
-        self.class_indices = {}
-        for i in range(10):
-            self.class_indices[i] = np.where(self.labels == i)[0]
-
-    def generate_batch(self, batch_size):
-        composite_images = []
-        label_pairs = []
-
-        for _ in range(batch_size):
-            # 随机选择第一个数字
-            idx1 = random.randint(0, len(self.images) - 1)
-            label1 = self.labels[idx1]
-
-            # 选择不同类别的第二个数字
-            valid_labels = list(set(range(10)) - {label1})
-            label2 = random.choice(valid_labels)
-            idx2 = random.choice(self.class_indices[label2])
-
-            # 生成复合图像
-            composite = generate_composite_image(self.images[idx1],
-                                                 self.images[idx2])
-
-            composite_images.append(composite)
-            label_pairs.append((label1, label2))
-
-        return np.array(composite_images), np.array(label_pairs)
-
-
 # ================== 数据分配函数 ==================
 def split_data_to_servers(dataset, num_servers=5):
     """将数据集均匀分配到多个服务器"""
@@ -145,6 +128,46 @@ def split_data_to_servers(dataset, num_servers=5):
         server_data[f"server_{i}"] = Subset(dataset, indices[start:end])
 
     return server_data
+
+
+# 加载原始数据集
+class DuplicatedLabelMNIST(Dataset):
+    def __init__(self, root, train=True):
+        # 加载原始 MNIST 数据集
+        self.original_dataset = datasets.MNIST(root='./Mnist', train=train, download=False, transform=transforms.Compose([
+            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
+        # 复制标签：将每个标签转换为 [label, label]
+        self.labels = torch.stack([self.original_dataset.targets,
+                                  self.original_dataset.targets], dim=1)
+        self.images = self.original_dataset.data
+
+    def __len__(self):
+        return len(self.original_dataset)
+
+    def __getitem__(self, idx):
+        # 直接通过 original_dataset 获取图像（已应用 transform）
+        image, _ = self.original_dataset[idx]  # image 已转换为 Tensor
+        label = self.labels[idx]  # 标签为 [2] 的 Tensor
+        return image, label
+
+if __name__ == "__main__":
+    # 创建可加载的 Dataset
+    train_dataset = DuplicatedLabelMNIST(root='./data', train=True)
+    test_dataset = DuplicatedLabelMNIST(root='./data', train=False)
+
+    # 使用 DataLoader 加载数据
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+    # 验证结果
+    for index, (data, labels) in enumerate(train_loader):
+        print("图像形状:", data.shape)  # 输出: torch.Size([64, 1, 28, 28])
+        print("标签形状:", labels.shape)  # 输出: torch.Size([64, 2])
+        print("示例标签:", labels[0])      # 例如: tensor([5, 5])
+        break
 
 # 使用示例
 # 初始化生成器（使用训练集路径）
