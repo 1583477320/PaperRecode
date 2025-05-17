@@ -13,10 +13,10 @@ from PIL import Image
 数据生成，将mnist数据拼接
 '''
 # 读取MNIST图像和标签的函数
-def generate_multi_mnist(num_samples, output_dir, train=True,save_images=False):
+def CompositeDataset(output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
     """生成 MultiMNIST 数据集"""
     # 确保输出目录存在
-    if not os.path.exists(output_dir):
+    if not os.path.exists(output_dir) and save_images is True:
         os.makedirs(output_dir)
 
     # 加载 MNIST 数据集
@@ -98,10 +98,9 @@ def generate_multi_mnist(num_samples, output_dir, train=True,save_images=False):
     return images, labels
 
 # 数据初始化
-class CompositeDataset(Dataset):
-    def __init__(self, images, labels):
-        self.images = images  # 归一化到[0,1]
-        self.labels = labels
+class generate_multi_mnist(Dataset):
+    def __init__(self, output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
+        self.images, self.labels =CompositeDataset(num_samples=num_samples,output_dir=output_dir,train=train,save_images=save_images)
 
     def __len__(self):
         return len(self.images)
@@ -130,11 +129,12 @@ def split_data_to_servers(dataset, num_servers=5):
     return server_data
 
 
-# 加载原始数据集
+# 重复标签数据集
 class DuplicatedLabelMNIST(Dataset):
+    """生成 DuplicatedMNIST 数据集"""
     def __init__(self, root, train=True):
         # 加载原始 MNIST 数据集
-        self.original_dataset = datasets.MNIST(root='./Mnist', train=train, download=False, transform=transforms.Compose([
+        self.original_dataset = datasets.MNIST(root=root, train=train, download=False, transform=transforms.Compose([
             transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
@@ -151,13 +151,14 @@ class DuplicatedLabelMNIST(Dataset):
     def __getitem__(self, idx):
         # 直接通过 original_dataset 获取图像（已应用 transform）
         image, _ = self.original_dataset[idx]  # image 已转换为 Tensor
-        label = self.labels[idx]  # 标签为 [2] 的 Tensor
-        return image, label
+        label1 = self.labels[idx][0]  # 标签为 [2] 的 Tensor
+        label2 = self.labels[idx][1]
+        return image, (label1,label2)
 
 if __name__ == "__main__":
     # 创建可加载的 Dataset
-    train_dataset = DuplicatedLabelMNIST(root='./data', train=True)
-    test_dataset = DuplicatedLabelMNIST(root='./data', train=False)
+    train_dataset = DuplicatedLabelMNIST(root='./Mnist', train=True)
+    test_dataset = DuplicatedLabelMNIST(root='./Mnist', train=False)
 
     # 使用 DataLoader 加载数据
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
@@ -165,8 +166,8 @@ if __name__ == "__main__":
     # 验证结果
     for index, (data, labels) in enumerate(train_loader):
         print("图像形状:", data.shape)  # 输出: torch.Size([64, 1, 28, 28])
-        print("标签形状:", labels.shape)  # 输出: torch.Size([64, 2])
-        print("示例标签:", labels[0])      # 例如: tensor([5, 5])
+        print("标签形状:", labels)  # 输出: torch.Size([64, 2])
+        # print("示例标签:", labels)      # 例如: tensor([5, 5])
         break
 
 # 使用示例

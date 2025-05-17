@@ -9,39 +9,41 @@ from scipy.optimize import minimize_scalar
 
 
 def aggregate_clients(client_dict):
-    # 初始化存储结构
-    grouped = defaultdict(lambda: defaultdict(list))
+    def average_across_clients(input_dict):
+        # 初始化中间存储结构：share -> task -> [所有client的tensor]
+        intermediate = defaultdict(lambda: defaultdict(list))
 
-    # 收集所有客户端的张量
-    for server_data in client_dict.values():
-        for key in server_data:
-            for pos_idx, tensor in enumerate(server_data[key]):
-                grouped[key][pos_idx].append(tensor)
+        # 遍历所有客户端
+        for client_data in input_dict.values():
+            # 遍历每个任务
+            for task_name, task_data in client_data.items():
+                # 遍历每个共享部分
+                for share_name, tensor in task_data.items():
+                    intermediate[share_name][task_name].append(tensor)
 
-    # 计算平均值
-    averaged = defaultdict(list)
-    for key in sorted(grouped.keys()):
-        for pos in sorted(grouped[key].keys()):
-            tensors = grouped[key][pos]
-
-            # 自动检测张量类型并计算平均
-            if isinstance(tensors[0], torch.Tensor):
-                stacked = torch.stack(tensors, dim=0)
+        # 计算平均值并构建结果
+        result = {}
+        for share_name, tasks in intermediate.items():
+            share_dict = {}
+            for task_name, tensors in tasks.items():
+                # 堆叠张量并计算平均值
+                stacked = torch.stack(tensors)
                 avg_tensor = torch.mean(stacked, dim=0)
-            else:
-                stacked = np.stack(tensors, axis=0)
-                avg_tensor = np.mean(stacked, axis=0)
+                share_dict[task_name] = avg_tensor
+            result[share_name] = share_dict
 
-            averaged[key].append(avg_tensor)
+        return result
 
-    average_tensors = dict(averaged)
+    average_tensors = average_across_clients(client_dict)
 
     # 求凸优化
-    lambda_1, lambda_2 = optimize_tensors(average_tensors["task1"][0], average_tensors["task2"][0])
-    lambda_3, lambda_4 = optimize_tensors(average_tensors["task1"][1], average_tensors["task2"][1])
+    lambda_1, lambda_2 = optimize_tensors(average_tensors['feature_extractor.1.weight']['task1'],
+                                          average_tensors['feature_extractor.1.weight']['task2'])
+    lambda_3, lambda_4 = optimize_tensors(average_tensors['feature_extractor.1.bias']['task1'],
+                                          average_tensors['feature_extractor.1.bias']['task2'])
 
-    return [lambda_1 * average_tensors["task1"][0] + lambda_2 * average_tensors["task2"][0],
-            lambda_3 * average_tensors["task1"][1] + lambda_4 * average_tensors["task2"][1]]
+    return [lambda_1 * average_tensors['feature_extractor.1.weight']['task1'] + lambda_2 * average_tensors['feature_extractor.1.weight']['task2'],
+            lambda_3 * average_tensors['feature_extractor.1.bias']['task1'] + lambda_4 * average_tensors['feature_extractor.1.bias']['task2']]
 
 
 def optimize_tensors(tensor1, tensor2):

@@ -2,61 +2,76 @@ from Client import client_local_train
 from ClientModel import ClientMTLModel
 import torch
 import torch.nn as nn
-from data_load import generate_multi_mnist, CompositeDataset, split_data_to_servers
+from data_load import generate_multi_mnist, CompositeDataset, split_data_to_servers, DuplicatedLabelMNIST
 from torch.utils.data import Dataset, DataLoader, Subset
 from Service import ServerSharedModel
 from Graient import federated_aggregation
 import matplotlib.pyplot as plt
 import numpy as np
 import random
-import tqdm
+
 
 # 超参设置
 num_servers = 10  # 模拟客户端个数
-num_rounds = 10  # 通讯轮数
-batch_size_list = [256]  # 训练batch_size列表
+num_rounds = 100  # 通讯轮数
+batch_size_list = [16, 64, 128, 256]  # 训练batch_size列表
 global_learn_rate = 0.1  # 服务端学习率
-num_epochs = 100  # 客户端训练轮次
+num_epochs = 5  # 客户端训练轮次
 local_rate = 0.1  # 客户端学习率
 
 
 # 准备原始数据集
-# 合成数据
+# 不同分类生成一个批次
+train_dataset = generate_multi_mnist(num_samples=60000)
 
-# 生成一个批次
-batch_images, batch_labels = generate_multi_mnist(6000, output_dir="../multi_mnist_data")
-full_dataset = CompositeDataset(batch_images, batch_labels)  # 使用前文生成的数据
-
-# 分配数据到5个服务器
-client_datasets = split_data_to_servers(full_dataset, num_servers=num_servers)
-
-# 训练流程
-# ------------------------------
 #生成测试数据
-batch_images_test, batch_labels_test = generate_multi_mnist(256, train=False, output_dir="../multi_mnist_data")
-full_dataset_test = CompositeDataset(batch_images_test, batch_labels_test)
+test_dataset = generate_multi_mnist(num_samples=6000, train=False)
 
+
+# #重复标签生成一个批次
+# train_dataset = DuplicatedLabelMNIST(root='./data_Mnist', train=True)
+#
+# # 训练流程
+# # ------------------------------
+# #生成测试数据
+# test_dataset = DuplicatedLabelMNIST(root='./data_Mnist', train=False)
 
 
 #loss函数记录
 loss_history = {'task1': {"batch_size 16":[], "batch_size 64":[],"batch_size 128":[], "batch_size 256":[]},
                 'task2': {"batch_size 16":[], "batch_size 64":[],"batch_size 128":[], "batch_size 256":[]}}
 
+sample_index = [i for i in range(6000)] #假设取前500个训练数据
+X_train = []
+y_train = []
+for i in sample_index:
+    X = train_dataset[i][0]
+    X_train.append(X)
+    y = train_dataset[i][1]
+    y_train.append(y)
+
+sampled_train_data = [(X, y) for X, y in zip(X_train, y_train)] #包装为数据对
+# trainDataLoader = torch.utils.data.DataLoader(sampled_train_data, batch_size=256, shuffle=True)
+
+client_datasets = split_data_to_servers(sampled_train_data, num_servers=num_servers)
+
+sample_test_index = [i for i in range(256)] #假设取前500个训练数据
+X_test = []
+y_test = []
+for i in sample_test_index:
+    X = test_dataset[i][0]
+    X_train.append(X)
+    y = test_dataset[i][1]
+    y_train.append(y)
+
+sampled_test_data = [(X, y) for X, y in zip(X_train, y_train)] #包装为数据对
+
+
 # 定义初始化函数
 def init_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.xavier_uniform_(m.weight)
         nn.init.zeros_(m.bias)
-
-# 固定 DataLoader 的生成器
-g = torch.Generator()
-g.manual_seed(42)
-
-def seed_worker(worker_id):
-    worker_seed = 42
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
-
 
 # 设置所有随机种子
 def set_seed(seed):
@@ -86,27 +101,7 @@ for batch_size in batch_size_list:
     total_correct_task1 = 0
     total_correct_task2 = 0
     # 选取对应测试数据
-    train_loader_test = DataLoader(full_dataset_test, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker,
-                                   generator=g)
-
-    # # loss起始
-    # init_loss_task1 = 0
-    # init_loss_task2 = 0
-    # with torch.no_grad():
-    #     for data, (target_task1, target_task2) in train_loader_test:
-    #         data = data.to(device)
-    #         pred_task1, pred_task2 = client_model(data)
-    #
-    #         # loss
-    #         init_loss_task1 += criterion(pred_task1, target_task1)
-    #         init_loss_task2 += criterion(pred_task2, target_task2)
-    # init_loss_task1 /= len(train_loader_test.dataset)
-    # init_loss_task1 *= batch_size / 16
-    # loss_history['task1']["batch_size {}".format(batch_size)].append(init_loss_task1)
-    #
-    # init_loss_task2 /= len(train_loader_test.dataset)
-    # init_loss_task2 *= batch_size / 16
-    # loss_history['task2']["batch_size {}".format(batch_size)].append(init_loss_task1)
+    train_loader_test = DataLoader(sampled_test_data, batch_size=batch_size, shuffle=True)
 
     for round in range(num_rounds):
         print(f"======== batch_size {batch_size} ========")
@@ -119,10 +114,9 @@ for batch_size in batch_size_list:
         client_models_gard = {}
         for client_idx, dataset in client_datasets.items():
             # 加载本地数据
-            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker,
-                                      generator=g)
+            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
             # 本地多任务训练
-            client_model, client_gard,task_loss = client_local_train(client_model, server_model.feature_extractor.state_dict(), train_loader, num_epochs=num_epochs, local_rate=local_rate)
+            client_model, client_gard, task_loss = client_local_train(client_model, server_model.feature_extractor.state_dict(), train_loader, num_epochs=num_epochs, local_rate=local_rate)
             client_models.append(client_model)
             client_models_gard[client_idx] = client_gard
             #记录客户端各任务loss
@@ -145,8 +139,11 @@ for batch_size in batch_size_list:
 
 
     with torch.no_grad():
-        for data, (target_task1, target_task2) in train_loader_test:
+        for data, (target1,target2) in train_loader_test:
             data = data.to(device)
+            data, target_task1, target_task2 = data.to(device), target1.to(device), target2.to(
+                device)
+
             pred_task1, pred_task2 = client0_model(data)
 
             # loss
@@ -178,7 +175,7 @@ for batch_size in batch_size_list:
 # 绘制损失曲线
 plt.figure(figsize=(10, 6))
 task1_loss = loss_history["task1"]
-for i in [16,64,128,256]:
+for i in batch_size_list:
     plt.plot(task1_loss["batch_size {}".format(i)], label="batch_size {}".format(i))
 plt.title("Task1 Loss")
 plt.xlabel("Global Epoch")
@@ -186,12 +183,12 @@ plt.ylabel("Average Local Loss")
 plt.legend()
 plt.grid(False)
 # 保存图像
-plt.savefig('task1_loss_curve.png', dpi=300, bbox_inches='tight')
+plt.savefig('task1_mulit_loss_curve.png', dpi=300, bbox_inches='tight')
 
 
 plt.figure(figsize=(10, 6))
 task2_loss = loss_history["task2"]
-for i in [16,64,128,256]:
+for i in batch_size_list:
     plt.plot(task2_loss["batch_size {}".format(i)], label="batch_size {}".format(i))
 plt.title("Task2 Loss")
 plt.xlabel("Global Epoch")
@@ -200,5 +197,5 @@ plt.legend()
 plt.grid(False)
 
 # 保存图像
-plt.savefig('task2_loss_curve.png', dpi=300, bbox_inches='tight')
+plt.savefig('task2_mulit_loss_curve.png', dpi=300, bbox_inches='tight')
 plt.show()
