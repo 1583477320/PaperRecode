@@ -13,13 +13,13 @@ class ClientMTLModel(nn.Module):
         self.feature_extractor = copy.deepcopy(server_model.feature_extractor)
         # 本地任务头
         self.task1_head = nn.Sequential(
-            nn.Linear(256, 32),
+            nn.Linear(128, 32),
             nn.ReLU(),
             nn.Dropout(),
             nn.Linear(32, 10)
         )  # 任务1
         self.task2_head = nn.Sequential(
-            nn.Linear(256, 32),
+            nn.Linear(128, 32),
             nn.ReLU(),
             nn.Dropout(),
             nn.Linear(32, 10)
