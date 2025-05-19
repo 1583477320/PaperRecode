@@ -1,8 +1,5 @@
 from torch.utils.data import Dataset, DataLoader, Subset
-import numpy as np
-import torch
-import struct
-import random
+from torch import randperm
 import os
 import numpy as np
 import torch
@@ -13,27 +10,15 @@ from PIL import Image
 数据生成，将mnist数据拼接
 '''
 # 读取MNIST图像和标签的函数
-def CompositeDataset(output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
+def CompositeDataset(dataset, output_dir="./multi_mnist_data", num_samples=60000,save_images=False):
     """生成 MultiMNIST 数据集"""
     # 确保输出目录存在
     if not os.path.exists(output_dir) and save_images is True:
         os.makedirs(output_dir)
 
-    # 加载 MNIST 数据集
-    mnist = datasets.MNIST(
-        root='./Mnist',
-        train=train,
-        download=False,
-        transform=transforms.Compose([
-            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
-    )
-
     # 将数据集按类别分组
-    class_images = {i: [] for i in range(10)}
-    for img, label in mnist:
+    class_images = {i: [] for i in range(len(set(dataset.targets)))}
+    for img, label in dataset:
         class_images[label].append(img)
 
     # 初始化图片和标签列表
@@ -99,8 +84,22 @@ def CompositeDataset(output_dir="./multi_mnist_data", num_samples=60000,train=Tr
 
 # 数据初始化
 class generate_multi_mnist(Dataset):
-    def __init__(self, output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
-        self.images, self.labels =CompositeDataset(num_samples=num_samples,output_dir=output_dir,train=train,save_images=save_images)
+    def __init__(self, dataset, output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
+        # 加载 MNIST 数据集
+        if dataset is None:
+            self.dataset = datasets.MNIST(
+                root='./Mnist',
+                train=train,
+                download=False,
+                transform=transforms.Compose([
+                    transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.1307,), (0.3081,))
+                ])
+            )
+        else:
+            self.dataset = dataset
+        self.images, self.labels =CompositeDataset(dataset=self.dataset,num_samples=num_samples,output_dir=output_dir,save_images=save_images)
 
     def __len__(self):
         return len(self.images)
@@ -155,39 +154,94 @@ class DuplicatedLabelMNIST(Dataset):
         label2 = self.labels[idx][1]
         return image, (label1,label2)
 
+
+# 加载复制标签数据集
+class OddLabelMNIST(Dataset):
+    def __init__(self, root, train=True):
+        # 加载原始 MNIST 数据集
+        self.original_dataset = datasets.MNIST(root=root, train=train, download=False, transform=transforms.Compose([
+            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
+        # 复制标签：将每个标签转换为 [label, label]
+        self.labels = torch.stack([self.original_dataset.targets,
+                                  torch.tensor([1 if i%2 == 0 else 0 for i in self.original_dataset.targets])], dim=1)
+        self.images = self.original_dataset.data
+
+    def __len__(self):
+        return len(self.original_dataset)
+
+    def __getitem__(self, idx):
+        # 直接通过 original_dataset 获取图像（已应用 transform）
+        image, _ = self.original_dataset[idx]  # image 已转换为 Tensor
+        label1 = self.labels[idx][0]  # 标签为 [2] 的 Tensor
+        label2 = self.labels[idx][1]
+        return image, (label1, label2)
+
+
+def generate_multi_mnist_non_iid_clients(num_clients,train = True):
+    # 加载 MNIST 数据集
+    mnist = datasets.MNIST(
+        root='./data_Mnist',
+        train =train,
+        download=False,
+        transform=transforms.Compose([
+            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
+    #不想用全量是，用Subset函数分区
+    # mnist = torch.utils.data.Subset(mnist, randperm(6000).tolist())
+
+
+    client_datasets = {}
+    for client_id in range(num_clients):
+        # 每个客户端随机分配两个主标签
+        main_labels = np.random.choice(10, 2, replace=False)
+        indices = np.where(np.isin(np.array(mnist.targets), main_labels))[0]
+        selected = np.random.choice(indices, int(min(len(indices),len(mnist)/num_clients)), replace=False)  # 每个客户端120样本
+
+        dataset = torch.utils.data.Subset(mnist, selected)
+        multi_dataset = generate_multi_mnist(dataset=dataset, output_dir="./multi_mnist_data", num_samples=len(dataset), save_images=False)
+
+        client_datasets[client_id] = multi_dataset
+
+    return client_datasets
+
+class DatasetSplit(Dataset):
+    def __init__(self, dataset, idxs):
+        self.dataset = dataset
+        self.idxs = list(idxs)
+
+    def __len__(self):
+        return len(self.idxs)
+
+    def __getitem__(self, item):
+        image, label = self.dataset[self.idxs[item]]
+        return image, label
+
 if __name__ == "__main__":
     # 创建可加载的 Dataset
-    train_dataset = DuplicatedLabelMNIST(root='./Mnist', train=True)
-    test_dataset = DuplicatedLabelMNIST(root='./Mnist', train=False)
+    # train_dataset = OddLabelMNIST(root='./data_Mnist', train=True)
+    # test_dataset = OddLabelMNIST(root='./data_Mnist', train=False)
 
-    # 使用 DataLoader 加载数据
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    # # 使用 DataLoader 加载数据
+    # train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    #
+    # # 验证结果
+    # for index, (data, labels) in enumerate(train_loader):
+    #     print("图像形状:", data.shape)  # 输出: torch.Size([64, 1, 28, 28])
+    #     print("标签形状:", labels)  # 输出: tensor([5, 0])
+    #     break
+
+    dict_users = generate_multi_mnist_non_iid_clients(num_clients=10)
+    train_loader = DataLoader(DatasetSplit(dataset = train_dataset, idxs = dict_users[0]), batch_size=64, shuffle=True)
 
     # 验证结果
     for index, (data, labels) in enumerate(train_loader):
         print("图像形状:", data.shape)  # 输出: torch.Size([64, 1, 28, 28])
-        print("标签形状:", labels)  # 输出: torch.Size([64, 2])
-        # print("示例标签:", labels)      # 例如: tensor([5, 5])
+        print("标签形状:", labels)  # 输出: tensor([5, 0])
         break
-
-# 使用示例
-# 初始化生成器（使用训练集路径）
-# generator = CompositeDatasetGenerator(
-#     r"C:\Users\15834\PycharmProjects\paper_recode\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-images-idx3-ubyte",
-#     r"C:\Users\15834\PycharmProjects\paper_recode\OpenDataLab___MultiMNIST\raw\multi-mnist\data\train-labels-idx1-ubyte"
-# )
-#
-# # 生成一个批次
-# batch_images, batch_labels = generator.generate_batch(16)
-# print(batch_images[2])
-# # 可视化验证
-# import matplotlib.pyplot as plt
-#
-# plt.figure(figsize=(10, 10))
-# for i in range(16):
-#     plt.subplot(4, 4, i + 1)
-#     plt.imshow(batch_images[i], cmap='gray')
-#     plt.title(f"{batch_labels[i][0]}+{batch_labels[i][1]}")
-#     plt.axis('off')
-# plt.tight_layout()
-# plt.show()
