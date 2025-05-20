@@ -5,11 +5,100 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 from PIL import Image
+from random import choice
 
 '''
 数据生成，将mnist数据拼接
 '''
-# 读取MNIST图像和标签的函数
+# 数据初始化
+class generate_multi_mnist(Dataset):
+    def __init__(self, dataset, output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
+        # 加载 MNIST 数据集
+        if dataset is None:
+            self.dataset = datasets.MNIST(
+                root='./Mnist',
+                train=train,
+                download=False,
+                transform=transforms.Compose([
+                    transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.1307,), (0.3081,))
+                ])
+            )
+        else:
+            self.dataset = dataset
+        self.images, self.labels =CompositeDataset(dataset=self.dataset,num_samples=num_samples,output_dir=output_dir,save_images=save_images)
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        # image = torch.tensor(self.images[idx].reshape(36 * 36))  # 展平为1296维
+        image = self.images[idx].detach().clone()  # 利用卷积
+        label1 = torch.tensor(self.labels[idx][0], dtype=torch.long)
+        label2 = torch.tensor(self.labels[idx][1], dtype=torch.long)
+        return image, (label1, label2)
+
+
+# ================== 数据分配函数 ==================
+def split_data_to_servers(dataset, num_servers=5):
+    """将数据集均匀分配到多个服务器"""
+    total_size = len(dataset)
+    indices = np.random.permutation(total_size)  # 随机打乱
+    chunk_size = total_size // num_servers
+
+    server_data = {}
+    for i in range(num_servers):
+        start = i * chunk_size
+        end = (i + 1) * chunk_size if i != num_servers - 1 else total_size
+        server_data[f"server_{i}"] = Subset(dataset, indices[start:end])
+
+    return server_data
+
+def generate_multi_mnist_non_iid_clients(num_clients=10,train = True):
+    # 加载 MNIST 数据集
+    mnist = datasets.MNIST(
+        root='./data_Mnist',
+        train =train,
+        download=False,
+        transform=transforms.Compose([
+            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
+    #不想用全量是，用Subset函数分区
+    # mnist = torch.utils.data.Subset(mnist, randperm(6000).tolist())
+
+    if train:
+        client_datasets = {}
+        for client_id in range(num_clients):
+            # 每个客户端随机分配两个主标签
+            main_labels = np.random.choice(10, 2, replace=False)
+            indices = np.where(np.isin(np.array(mnist.targets), main_labels))[0]
+            selected = np.random.choice(indices, int(min(len(indices),len(mnist)/num_clients)), replace=False)  # 每个客户端min(len(indices),len(mnist)/num_clients)样本
+
+            dataset = torch.utils.data.Subset(mnist, selected)
+            multi_dataset = generate_multi_mnist(dataset=dataset, output_dir="./multi_mnist_data", num_samples=len(dataset), save_images=False)
+
+            client_datasets[client_id] = multi_dataset
+
+        return client_datasets
+    else:
+        main_labels = np.random.choice(10, 2, replace=False)
+        indices = np.where(np.isin(np.array(mnist.targets), main_labels))[0]
+        selected = np.random.choice(indices, int(min(len(indices), len(mnist) / num_clients)),
+                                    replace=False)  # 每个客户端min(len(indices),len(mnist)/num_clients)样本
+
+        dataset = torch.utils.data.Subset(mnist, selected)
+        multi_dataset = generate_multi_mnist(dataset=dataset, output_dir="./multi_mnist_data", num_samples=258,
+                                             save_images=False)
+
+        return multi_dataset
+
+
+
+# 图片拼接函数
 def CompositeDataset(dataset, output_dir="./multi_mnist_data", num_samples=60000,save_images=False):
     """生成 MultiMNIST 数据集"""
     # 确保输出目录存在
@@ -17,7 +106,7 @@ def CompositeDataset(dataset, output_dir="./multi_mnist_data", num_samples=60000
         os.makedirs(output_dir)
 
     # 将数据集按类别分组
-    class_images = {i: [] for i in range(len(set(dataset.targets)))}
+    class_images = {i: [] for i in sorted(list(set([dataset.dataset.targets[idx].item() for idx in dataset.indices])))}
     for img, label in dataset:
         class_images[label].append(img)
 
@@ -28,10 +117,10 @@ def CompositeDataset(dataset, output_dir="./multi_mnist_data", num_samples=60000
     # 生成 num_samples 个样本
     for i in range(num_samples):
         # 随机选择两个不同的类别
-        label1 = np.random.randint(0, 10)
+        label1 = choice(list(class_images.keys()))
         label2 = label1
         while label2 == label1:
-            label2 = np.random.randint(0, 10)
+            label2 = choice(list(class_images.keys()))
 
         # 随机选择两个不同类别的图片
         img1 = class_images[label1][np.random.randint(0, len(class_images[label1]))]
@@ -82,51 +171,33 @@ def CompositeDataset(dataset, output_dir="./multi_mnist_data", num_samples=60000
     # 返回图片列表和标签列表
     return images, labels
 
-# 数据初始化
-class generate_multi_mnist(Dataset):
-    def __init__(self, dataset, output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
-        # 加载 MNIST 数据集
-        if dataset is None:
-            self.dataset = datasets.MNIST(
-                root='./Mnist',
-                train=train,
-                download=False,
-                transform=transforms.Compose([
-                    transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.1307,), (0.3081,))
-                ])
-            )
-        else:
-            self.dataset = dataset
-        self.images, self.labels =CompositeDataset(dataset=self.dataset,num_samples=num_samples,output_dir=output_dir,save_images=save_images)
+
+
+#----------------------------------非论文数据集---------------------------------------
+# 奇偶标签数据集
+class OddLabelMNIST(Dataset):
+    def __init__(self, root, train=True):
+        # 加载原始 MNIST 数据集
+        self.original_dataset = datasets.MNIST(root=root, train=train, download=False, transform=transforms.Compose([
+            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
+        # 复制标签：将每个标签转换为 [label, label]
+        self.labels = torch.stack([self.original_dataset.targets,
+                                  torch.tensor([1 if i%2 == 0 else 0 for i in self.original_dataset.targets])], dim=1)
+        self.images = self.original_dataset.data
 
     def __len__(self):
-        return len(self.images)
+        return len(self.original_dataset)
 
     def __getitem__(self, idx):
-        # image = torch.tensor(self.images[idx].reshape(36 * 36))  # 展平为1296维
-        image = torch.tensor(self.images[idx])  # 利用卷积
-        label1 = torch.tensor(self.labels[idx][0], dtype=torch.long)
-        label2 = torch.tensor(self.labels[idx][1], dtype=torch.long)
+        # 直接通过 original_dataset 获取图像（已应用 transform）
+        image, _ = self.original_dataset[idx]  # image 已转换为 Tensor
+        label1 = self.labels[idx][0]  # 标签为 [2] 的 Tensor
+        label2 = self.labels[idx][1]
         return image, (label1, label2)
-
-
-# ================== 数据分配函数 ==================
-def split_data_to_servers(dataset, num_servers=5):
-    """将数据集均匀分配到多个服务器"""
-    total_size = len(dataset)
-    indices = np.random.permutation(total_size)  # 随机打乱
-    chunk_size = total_size // num_servers
-
-    server_data = {}
-    for i in range(num_servers):
-        start = i * chunk_size
-        end = (i + 1) * chunk_size if i != num_servers - 1 else total_size
-        server_data[f"server_{i}"] = Subset(dataset, indices[start:end])
-
-    return server_data
-
 
 # 重复标签数据集
 class DuplicatedLabelMNIST(Dataset):
@@ -154,75 +225,6 @@ class DuplicatedLabelMNIST(Dataset):
         label2 = self.labels[idx][1]
         return image, (label1,label2)
 
-
-# 加载复制标签数据集
-class OddLabelMNIST(Dataset):
-    def __init__(self, root, train=True):
-        # 加载原始 MNIST 数据集
-        self.original_dataset = datasets.MNIST(root=root, train=train, download=False, transform=transforms.Compose([
-            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
-    )
-        # 复制标签：将每个标签转换为 [label, label]
-        self.labels = torch.stack([self.original_dataset.targets,
-                                  torch.tensor([1 if i%2 == 0 else 0 for i in self.original_dataset.targets])], dim=1)
-        self.images = self.original_dataset.data
-
-    def __len__(self):
-        return len(self.original_dataset)
-
-    def __getitem__(self, idx):
-        # 直接通过 original_dataset 获取图像（已应用 transform）
-        image, _ = self.original_dataset[idx]  # image 已转换为 Tensor
-        label1 = self.labels[idx][0]  # 标签为 [2] 的 Tensor
-        label2 = self.labels[idx][1]
-        return image, (label1, label2)
-
-
-def generate_multi_mnist_non_iid_clients(num_clients,train = True):
-    # 加载 MNIST 数据集
-    mnist = datasets.MNIST(
-        root='./data_Mnist',
-        train =train,
-        download=False,
-        transform=transforms.Compose([
-            transforms.Pad(4, fill=0, padding_mode='constant'),  # 将图片调整为 36x36
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
-    )
-    #不想用全量是，用Subset函数分区
-    # mnist = torch.utils.data.Subset(mnist, randperm(6000).tolist())
-
-
-    client_datasets = {}
-    for client_id in range(num_clients):
-        # 每个客户端随机分配两个主标签
-        main_labels = np.random.choice(10, 2, replace=False)
-        indices = np.where(np.isin(np.array(mnist.targets), main_labels))[0]
-        selected = np.random.choice(indices, int(min(len(indices),len(mnist)/num_clients)), replace=False)  # 每个客户端120样本
-
-        dataset = torch.utils.data.Subset(mnist, selected)
-        multi_dataset = generate_multi_mnist(dataset=dataset, output_dir="./multi_mnist_data", num_samples=len(dataset), save_images=False)
-
-        client_datasets[client_id] = multi_dataset
-
-    return client_datasets
-
-class DatasetSplit(Dataset):
-    def __init__(self, dataset, idxs):
-        self.dataset = dataset
-        self.idxs = list(idxs)
-
-    def __len__(self):
-        return len(self.idxs)
-
-    def __getitem__(self, item):
-        image, label = self.dataset[self.idxs[item]]
-        return image, label
-
 if __name__ == "__main__":
     # 创建可加载的 Dataset
     # train_dataset = OddLabelMNIST(root='./data_Mnist', train=True)
@@ -237,8 +239,8 @@ if __name__ == "__main__":
     #     print("标签形状:", labels)  # 输出: tensor([5, 0])
     #     break
 
-    dict_users = generate_multi_mnist_non_iid_clients(num_clients=10)
-    train_loader = DataLoader(DatasetSplit(dataset = train_dataset, idxs = dict_users[0]), batch_size=64, shuffle=True)
+    train_dataset_dict = generate_multi_mnist_non_iid_clients(num_clients=10)
+    train_loader = DataLoader(train_dataset_dict[0], batch_size=64, shuffle=True)
 
     # 验证结果
     for index, (data, labels) in enumerate(train_loader):
