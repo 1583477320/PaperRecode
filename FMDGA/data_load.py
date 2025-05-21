@@ -17,7 +17,7 @@ class generate_multi_mnist(Dataset):
         # 加载 MNIST 数据集
         if dataset is None:
             self.dataset = datasets.MNIST(
-                root='./data_Mnist',
+                root='./Mnist',
                 train=train,
                 download=False,
                 transform=transforms.Compose([
@@ -59,7 +59,7 @@ def split_data_to_servers(dataset, num_servers=5):
 def generate_multi_mnist_non_iid_clients(num_clients=10,train = True):
     # 加载 MNIST 数据集
     mnist = datasets.MNIST(
-        root='./data_Mnist',
+        root='./Mnist',
         train =train,
         download=False,
         transform=transforms.Compose([
