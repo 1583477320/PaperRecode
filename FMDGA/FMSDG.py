@@ -14,18 +14,18 @@ import random
 # 超参设置
 num_servers = 10  # 模拟客户端个数
 num_rounds = 100  # 通讯轮数
-batch_size_list = [256]  # 训练batch_size列表
+batch_size_list = [16,64,128,256]  # 训练batch_size列表
 global_learn_rate = 0.1  # 服务端学习率
 num_epochs = 5  # 客户端训练轮次
 local_rate = 0.1  # 客户端学习率
 
 
-# # 准备原始数据集
-# # 不同分类生成一个批次
-# train_dataset = generate_multi_mnist(num_samples=60000)
-#
-# #生成测试数据
-# test_dataset = generate_multi_mnist(num_samples=6000, train=False)
+# 准备原始数据集
+# 不同分类生成一个批次
+train_dataset = generate_multi_mnist(num_samples=60000)
+
+#生成测试数据
+test_dataset = generate_multi_mnist(num_samples=6000, train=False)
 
 
 # #重复标签生成一个批次
@@ -35,40 +35,40 @@ local_rate = 0.1  # 客户端学习率
 # # ------------------------------
 # #生成测试数据
 # test_dataset = OddLabelMNIST(root='./data_Mnist', train=False)
-#
-#
+
+
 #loss函数记录
 loss_history = {'task1': {"batch_size 16":[], "batch_size 64":[],"batch_size 128":[], "batch_size 256":[]},
                 'task2': {"batch_size 16":[], "batch_size 64":[],"batch_size 128":[], "batch_size 256":[]}}
-#
-# sample_index = [i for i in range(6000)] #假设取前500个训练数据
-# X_train = []
-# y_train = []
-# for i in sample_index:
-#     X = train_dataset[i][0]
-#     X_train.append(X)
-#     y = train_dataset[i][1]
-#     y_train.append(y)
-#
-# sampled_train_data = [(X, y) for X, y in zip(X_train, y_train)] #包装为数据对
-# # trainDataLoader = torch.utils.data.DataLoader(sampled_train_data, batch_size=256, shuffle=True)
-#
-# client_datasets = split_data_to_servers(sampled_train_data, num_servers=num_servers)
-#
-# sample_test_index = [i for i in range(256)] #假设取前500个训练数据
-# X_test = []
-# y_test = []
-# for i in sample_test_index:
-#     X = test_dataset[i][0]
-#     X_train.append(X)
-#     y = test_dataset[i][1]
-#     y_train.append(y)
-#
-# sampled_test_data = [(X, y) for X, y in zip(X_train, y_train)] #包装为数据对
 
-train_data = generate_multi_mnist_non_iid_clients(num_clients=10)
+sample_index = [i for i in range(6000)] #假设取前500个训练数据
+X_train = []
+y_train = []
+for i in sample_index:
+    X = train_dataset[i][0]
+    X_train.append(X)
+    y = train_dataset[i][1]
+    y_train.append(y)
 
-test_data = generate_multi_mnist_non_iid_clients(train=False)
+train_data = [(X, y) for X, y in zip(X_train, y_train)] #包装为数据对
+# trainDataLoader = torch.utils.data.DataLoader(sampled_train_data, batch_size=256, shuffle=True)
+
+clients_train_data = split_data_to_servers(train_data, num_servers=num_servers)
+
+sample_test_index = [i for i in range(256)] #假设取前500个训练数据
+X_test = []
+y_test = []
+for i in sample_test_index:
+    X = test_dataset[i][0]
+    X_train.append(X)
+    y = test_dataset[i][1]
+    y_train.append(y)
+
+test_data = [(X, y) for X, y in zip(X_train, y_train)] #包装为数据对
+
+# train_data = generate_multi_mnist_non_iid_clients(num_clients=10)
+#
+# test_data = generate_multi_mnist_non_iid_clients(train=False)
 
 # 定义初始化函数
 def init_weights(m):
@@ -115,7 +115,7 @@ for batch_size in batch_size_list:
 
         # 客户端本地训练
         client_models_gard = {}
-        for client_idx, dataset in train_data.items():
+        for client_idx, dataset in clients_train_data.items():
             # 加载本地数据
             train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
             # 本地多任务训练
