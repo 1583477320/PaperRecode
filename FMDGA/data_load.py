@@ -1,3 +1,4 @@
+from gitdb.util import exists
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch import randperm
 import os
@@ -12,11 +13,11 @@ from random import choice
 '''
 # 数据初始化
 class generate_multi_mnist(Dataset):
-    def __init__(self, dataset, output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
+    def __init__(self, dataset = None, output_dir="./multi_mnist_data", num_samples=60000,train=True,save_images=False):
         # 加载 MNIST 数据集
         if dataset is None:
             self.dataset = datasets.MNIST(
-                root='./Mnist',
+                root='./data_Mnist',
                 train=train,
                 download=False,
                 transform=transforms.Compose([
@@ -106,7 +107,12 @@ def CompositeDataset(dataset, output_dir="./multi_mnist_data", num_samples=60000
         os.makedirs(output_dir)
 
     # 将数据集按类别分组
-    class_images = {i: [] for i in sorted(list(set([dataset.dataset.targets[idx].item() for idx in dataset.indices])))}
+    if isinstance(dataset,Subset) :
+        class_images = {i: [] for i in
+                        sorted(list(set([dataset.dataset.targets[idx].item() for idx in dataset.indices])))}
+    else:
+        class_images = {i: [] for i in
+                        sorted(list(set(dataset.targets.tolist())))}
     for img, label in dataset:
         class_images[label].append(img)
 
